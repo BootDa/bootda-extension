@@ -1,0 +1,11 @@
+node_modules/
+extension/dist/
+coverage/
+.env
+.env.*
+!.env.example
+.vercel/
+*.pem
+*.key
+*.crx
+*.zip
