@@ -132,11 +132,7 @@ export default defineContentScript({
         // The user may have moved to a non-detail route in the same document.
       }
 
-      const id = key?.slice('saramin:'.length);
-      // Saramin marks each complete detail section with its posting ID.
-      const identity = id ? new RegExp(`^jview-\\d+-${id}$`) : null;
-      const root = identity ? Array.from(document.querySelectorAll('.jview'))
-        .find(section => Array.from(section.classList).some(name => identity.test(name))) ?? null : null;
+      const root = key ? readSaraminDocument(url, 'root') : null;
       const original = root?.querySelector(`.wrap_jv_header > ${applyHeader}`) ?? null;
       if (key !== postingKey || root !== postingRoot || original !== originalHeader) closePreview();
       postingKey = key;
@@ -147,7 +143,9 @@ export default defineContentScript({
         return;
       }
 
-      const floating = document.querySelector(`.jv_header_float > ${applyHeader}[data-rec_idx="${id}"]`);
+      const sequence = new URLSearchParams(new URL(url).hash.slice(1)).get('seq') ?? '0';
+      const id = original.getAttribute('data-rec_idx') ?? key?.slice('saramin:'.length) ?? '';
+      const floating = document.querySelector(`.jv_header_float > ${applyHeader}[data-rec_idx="${CSS.escape(id)}"][data-rec_seq="${sequence}"]`);
       const bounds = floating?.getBoundingClientRect();
       const header = floating && bounds && bounds.width > 0 && bounds.height > 0
         && bounds.bottom > 0 && bounds.top < window.innerHeight
