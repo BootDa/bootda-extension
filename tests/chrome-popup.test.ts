@@ -20,8 +20,8 @@ test('Chrome refreshes a late deadline and hides the previous posting during nav
     await tab.setRequestInterception(true);
     const applyMarkup = '<div class="btn_apply"><button type="button">입사지원</button></div>';
     const header = fixtureHeader.replace('</div>', `${applyMarkup}</div>`);
-    const posting = (id: number, markup: string) =>
-      `<section class="jview jview-0-${id}"><div class="wrap_jv_header">${markup}</div></section>`;
+    const posting = (id: number, markup: string, sequence = 0) =>
+      `<section class="jview jview-${sequence}-${id}"><div class="wrap_jv_header">${markup}</div></section>`;
     tab.on('request', request => request.url() === fixtureUrl
       ? request.respond({ contentType: 'text/html; charset=utf-8', body: posting(123, header) })
       : request.abort());
@@ -32,7 +32,7 @@ test('Chrome refreshes a late deadline and hides the previous posting during nav
     await tab.evaluate(floatingHeader => {
       document.body.insertAdjacentHTML('afterbegin',
         `<div class="jv_header_float" style="position: fixed; inset: 0 0 auto">${floatingHeader}</div>`);
-    }, header.replace('class="jv_header"', 'class="jv_header" data-rec_idx="123"').replace('예시 회사', '고정 헤더 회사'));
+    }, header.replace('class="jv_header"', 'class="jv_header" data-rec_idx="123" data-rec_seq="0"').replace('예시 회사', '고정 헤더 회사'));
     await tab.waitForSelector(`.jv_header_float > .jv_header + ${inlineButton}`, { timeout: 5_000 });
     await expectOneInlineButton(tab);
     await expectOpenPreview(tab, fields);
@@ -50,6 +50,18 @@ test('Chrome refreshes a late deadline and hides the previous posting during nav
     { timeout: 5_000 }, inlineButton, '2026.11.30 18:00');
     await expectOpenPreview(tab, ['예시 회사', '웹 개발자 채용', '2026.11.30 18:00']);
 
+    await tab.evaluate(() => history.replaceState(null, '', '#seq=1'));
+    await tab.waitForSelector(inlineButton, { hidden: true, timeout: 5_000 });
+    await tab.evaluate(related => document.body.insertAdjacentHTML('beforeend', related),
+      posting(789, header.replace('예시 회사', '추천 회사').replace('웹 개발자   채용', '추천 공고'), 1));
+    await tab.waitForSelector(`.jview-1-789 ${inlineButton}`, { timeout: 5_000 });
+    await expectOneInlineButton(tab);
+    expect(await tab.$eval(inlineButton, host => host.shadowRoot?.querySelector('section')?.hidden)).toBe(true);
+    await expectInlinePreview(tab, ['추천 회사', '추천 공고', '미확인']);
+    await tab.evaluate(() => history.replaceState(null, '', '#seq=0'));
+    await tab.waitForSelector(`.jview-0-123 ${inlineButton}`, { timeout: 5_000 });
+    await expectInlinePreview(tab, ['예시 회사', '웹 개발자 채용', '2026.11.30 18:00']);
+
     await tab.evaluate(() => history.pushState(null, '', '?rec_idx=456'));
     expect(new URL(tab.url()).searchParams.get('rec_idx')).toBe('456');
     await tab.waitForSelector(inlineButton, { hidden: true, timeout: 5_000 });
@@ -59,7 +71,7 @@ test('Chrome refreshes a late deadline and hides the previous posting during nav
       document.body.insertAdjacentHTML('afterbegin',
         `<div class="jv_header_float" style="position: fixed; inset: 0 0 auto">${oldHeader}</div>`);
     }, posting(456, header.replace('예시 회사', '두 번째 회사')),
-    header.replace('class="jv_header"', 'class="jv_header" data-rec_idx="123"'));
+    header.replace('class="jv_header"', 'class="jv_header" data-rec_idx="123" data-rec_seq="0"'));
     expect(await tab.$eval('.jview-0-456 .company', element => element.textContent)).toContain('두 번째 회사');
     await expectOneInlineButton(tab);
     expect(await tab.$eval(inlineButton, host => Boolean(host.closest('.jview-0-456')))).toBe(true);
@@ -137,6 +149,27 @@ test.skipIf(process.env.BOOTDA_TEST_LIVE_SARAMIN !== '1')(
       const summary = `${inlineButton} >>> summary`;
       await tab.click(summary);
       await tab.waitForSelector(`${inlineButton} >>> details[open] p`, { visible: true, timeout: 5_000 });
+
+      await tab.evaluate(() => window.scrollTo(0, document.documentElement.scrollHeight));
+      await tab.waitForSelector('.jview[class*="jview-1-"] .wrap_jv_header .jv_header', { timeout: 15_000 });
+      await tab.$eval('.jview[class*="jview-1-"] .wrap_jv_header .jv_header', header => {
+        window.scrollBy(0, header.getBoundingClientRect().top + 700);
+      });
+      await tab.waitForFunction(() => location.hash === '#seq=1', { timeout: 10_000 });
+      await tab.waitForSelector(`.jv_header_float > .jv_header[data-rec_seq="1"] + ${inlineButton}`, { timeout: 8_000 });
+      await expectOneInlineButton(tab);
+      expect(await tab.$eval(inlineButton, host => host.shadowRoot?.querySelector('section')?.hidden)).toBe(true);
+      await tab.click(`${inlineButton} >>> button`);
+      await tab.waitForSelector(`${inlineButton} >>> section:not([hidden]) dd`, { timeout: 5_000 });
+      const activeTitle = await tab.$eval('.jview[class*="jview-1-"] .wrap_jv_header .tit_job', title =>
+        title.textContent?.replace(/\s+/g, ' ').trim());
+      expect(await tab.$eval(inlineButton, host => host.shadowRoot?.querySelectorAll('dd')[1]?.textContent))
+        .toBe(activeTitle);
+      expect(activeTitle).not.toBe(fields[1]);
+      await tab.evaluate(() => window.scrollTo(0, 0));
+      await tab.waitForSelector(`.jview-0-55644102 .wrap_jv_header ${inlineButton}`, { timeout: 8_000 });
+      await expectOneInlineButton(tab);
+      expect(await tab.$eval(inlineButton, host => host.shadowRoot?.querySelector('section')?.hidden)).toBe(true);
 
       async function expectMovedPreview(wrapper: string) {
         const selector = `${wrapper} > .jv_header + ${inlineButton}`;
@@ -222,7 +255,12 @@ test('Chrome popup rejects a previous posting after the URL changes', async () =
   await verifyPostingPopup(fixtureUrl, fixtureHeader + fixturePeriod, null, '456');
 }, 45_000);
 
-async function verifyPostingPopup(url: string, html: string | null, expected: string[] | null, nextId?: string) {
+test('Chrome popup uses the current recommendation instead of the entry posting', async () => {
+  const related = fixtureHeader.replace('예시 회사', '추천 회사').replace('웹 개발자   채용', '추천 공고');
+  await verifyPostingPopup(fixtureUrl, fixtureHeader + fixturePeriod, ['추천 회사', '추천 공고', '미확인'], undefined, related);
+}, 45_000);
+
+async function verifyPostingPopup(url: string, html: string | null, expected: string[] | null, nextId?: string, related?: string) {
   const manifest = JSON.parse(await readFile(new URL('manifest.json', build), 'utf8'));
   const browser = await puppeteer.launch({ headless: false, enableExtensions: true });
   try {
@@ -232,7 +270,10 @@ async function verifyPostingPopup(url: string, html: string | null, expected: st
 
     const tab = await browser.newPage();
     if (html !== null) {
-      const fixture = `<section class="jview jview-0-123"><div class="wrap_jv_header">${html.replace('class="jv_header"', 'class="jv_header" data-rec_idx="123"')}</div></section>`;
+      const first = `<section class="jview jview-0-123"><div class="wrap_jv_header">${html.replace('class="jv_header"', 'class="jv_header" data-rec_idx="123"')}</div></section>`;
+      const fixture = related
+        ? `${first}<section class="jview jview-1-789"><div class="wrap_jv_header">${related}</div></section>`
+        : first;
       await tab.setRequestInterception(true);
       tab.on('request', request => request.url() === url
         ? request.respond({ contentType: 'text/html; charset=utf-8', body: fixture })
@@ -240,6 +281,7 @@ async function verifyPostingPopup(url: string, html: string | null, expected: st
     }
     await tab.goto(url, { waitUntil: 'domcontentloaded', timeout: 20_000 });
     if (nextId) await tab.evaluate(id => history.pushState(null, '', `?rec_idx=${id}`), nextId);
+    if (related) await tab.evaluate(() => history.replaceState(null, '', '#seq=1'));
     if (html === null) await tab.waitForSelector('.jv_howto .info_period .end', { timeout: 12_000 });
     await tab.bringToFront();
     await tab.triggerExtensionAction(extension);
