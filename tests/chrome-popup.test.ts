@@ -12,7 +12,7 @@ const fixtureHeader = '<div class="jv_header"><a class="company"> 예시 회사 
 const fixturePeriod = '<section class="jv_cont jv_howto"><dl class="info_period"><dt>시작일</dt><dd>2026.11.20 09:00</dd><dt class="end">마감일</dt><dd>2026.11.30 18:00</dd></dl></section>';
 const inlineButton = '[data-bootda-saramin-button]';
 
-test('Chrome keeps one inline button when Saramin replaces the posting header', async () => {
+test('Chrome refreshes a late deadline and hides the previous posting during navigation', async () => {
   const browser = await puppeteer.launch({ headless: false, enableExtensions: true });
   try {
     await browser.installExtension(fileURLToPath(build));
@@ -20,20 +20,54 @@ test('Chrome keeps one inline button when Saramin replaces the posting header', 
     await tab.setRequestInterception(true);
     const applyMarkup = '<div class="btn_apply"><button type="button">입사지원</button></div>';
     const header = fixtureHeader.replace('</div>', `${applyMarkup}</div>`);
+    const posting = (id: number, markup: string) =>
+      `<section class="jview jview-0-${id}"><div class="wrap_jv_header">${markup}</div></section>`;
     tab.on('request', request => request.url() === fixtureUrl
-      ? request.respond({ contentType: 'text/html; charset=utf-8', body: header })
+      ? request.respond({ contentType: 'text/html; charset=utf-8', body: posting(123, header) })
       : request.abort());
     await tab.goto(fixtureUrl, { waitUntil: 'domcontentloaded' });
     await expectOneInlineButton(tab);
-
-    await tab.evaluate(nextHeader => {
-      history.pushState(null, '', '?rec_idx=456');
-      const currentHeader = document.querySelector('.jv_header');
-      if (currentHeader) currentHeader.outerHTML = nextHeader;
-    }, header.replace('예시 회사', '두 번째 회사'));
-    expect(new URL(tab.url()).searchParams.get('rec_idx')).toBe('456');
-    expect(await tab.$eval('.jv_header .company', element => element.textContent)).toContain('두 번째 회사');
+    const fields = ['예시 회사', '웹 개발자 채용', '미확인'];
+    await expectInlinePreview(tab, fields);
+    await tab.evaluate(floatingHeader => {
+      document.body.insertAdjacentHTML('afterbegin',
+        `<div class="jv_header_float" style="position: fixed; inset: 0 0 auto">${floatingHeader}</div>`);
+    }, header.replace('class="jv_header"', 'class="jv_header" data-rec_idx="123"').replace('예시 회사', '고정 헤더 회사'));
+    await tab.waitForSelector(`.jv_header_float > .jv_header + ${inlineButton}`, { timeout: 5_000 });
     await expectOneInlineButton(tab);
+    await expectOpenPreview(tab, fields);
+    await tab.click(`${inlineButton} >>> button`);
+    await expectInlinePreview(tab, fields);
+
+    await tab.evaluate(() => document.querySelector('.jv_header_float')?.remove());
+    await tab.waitForSelector(`.wrap_jv_header > .jv_header + ${inlineButton}`, { timeout: 5_000 });
+    await expectOneInlineButton(tab);
+    await expectOpenPreview(tab, fields);
+
+    await tab.evaluate(period => document.querySelector('.jview')?.insertAdjacentHTML('beforeend', period), fixturePeriod);
+    await tab.waitForFunction((selector, value) =>
+      document.querySelector(selector)?.shadowRoot?.querySelectorAll('dd')[2]?.textContent === value,
+    { timeout: 5_000 }, inlineButton, '2026.11.30 18:00');
+    await expectOpenPreview(tab, ['예시 회사', '웹 개발자 채용', '2026.11.30 18:00']);
+
+    await tab.evaluate(() => history.pushState(null, '', '?rec_idx=456'));
+    expect(new URL(tab.url()).searchParams.get('rec_idx')).toBe('456');
+    await tab.waitForSelector(inlineButton, { hidden: true, timeout: 5_000 });
+    expect(await tab.$eval('.jview-0-123 .company', element => element.textContent)).toContain('예시 회사');
+    await tab.evaluate((nextPosting, oldHeader) => {
+      document.body.insertAdjacentHTML('beforeend', nextPosting);
+      document.body.insertAdjacentHTML('afterbegin',
+        `<div class="jv_header_float" style="position: fixed; inset: 0 0 auto">${oldHeader}</div>`);
+    }, posting(456, header.replace('예시 회사', '두 번째 회사')),
+    header.replace('class="jv_header"', 'class="jv_header" data-rec_idx="123"'));
+    expect(await tab.$eval('.jview-0-456 .company', element => element.textContent)).toContain('두 번째 회사');
+    await expectOneInlineButton(tab);
+    expect(await tab.$eval(inlineButton, host => Boolean(host.closest('.jview-0-456')))).toBe(true);
+    await tab.evaluate(() => document.querySelector('.jv_header_float')?.remove());
+    expect(await tab.$eval(inlineButton, host => host.shadowRoot?.querySelector('section')?.hidden)).toBe(true);
+    await expectInlinePreview(tab, ['두 번째 회사', '웹 개발자 채용', '미확인']);
+    await tab.click(`${inlineButton} >>> button`);
+    expect(await tab.$eval(inlineButton, host => host.shadowRoot?.querySelector('section')?.hidden)).toBe(true);
 
     await tab.evaluate(() => history.pushState(null, '', '/zf_user/jobs/public/list'));
     await tab.waitForSelector(inlineButton, { hidden: true, timeout: 5_000 });
@@ -44,12 +78,13 @@ test('Chrome keeps one inline button when Saramin replaces the posting header', 
 }, 30_000);
 
 test.skipIf(process.env.BOOTDA_TEST_LIVE_SARAMIN !== '1')(
-  'Chrome shows one inline button per real posting when navigating in the same tab',
+  'Chrome keeps one inline button and its open preview across real Saramin headers',
   async () => {
     const browser = await puppeteer.launch({ headless: false, enableExtensions: true });
     try {
       await browser.installExtension(fileURLToPath(build));
       const tab = await browser.newPage();
+      await tab.setViewport({ width: 1200, height: 900 });
       for (const [id, company] of [['55644102', '삼신테크'], ['55617351', '호서대학교'], ['55644102', '삼신테크']]) {
         await tab.goto(`https://www.saramin.co.kr/zf_user/jobs/relay/view?rec_idx=${id}&view_type=etc`, {
           waitUntil: 'domcontentloaded', timeout: 20_000,
@@ -66,14 +101,61 @@ test.skipIf(process.env.BOOTDA_TEST_LIVE_SARAMIN !== '1')(
         expect(bounds.gap).toBeLessThanOrEqual(32);
         expect(bounds.rightOffset).toBeLessThanOrEqual(2);
       }
-      const image = new URL('saramin-inline-button.png', screenshot);
+      await tab.waitForSelector('.jv_howto .info_period .end', { timeout: 12_000 });
+      const fields = [
+        '삼신테크',
+        '[강남역/주6일/오전4시간] 삼성전자 조간 스크랩 업무 채용',
+        '2026.11.30 08:00',
+      ];
+      await expectInlinePreview(tab, fields);
+      const originalHost = await tab.$(`.wrap_jv_header > .jv_header + ${inlineButton}`);
+      if (!originalHost) throw new Error('Missing original preview host');
+
+      await tab.evaluate(() => window.scrollTo(0, 850));
+      await expectMovedPreview('.jv_header_float');
+      const image = new URL('saramin-floating-preview.png', screenshot);
       await mkdir(new URL('./', image), { recursive: true });
-      const clip = await tab.$eval(inlineButton, host => {
-        const row = host.getBoundingClientRect();
-        const header = host.previousElementSibling!.getBoundingClientRect();
-        return { x: header.x, y: header.y, width: header.width, height: row.bottom - header.y };
+      const preview = await tab.$(`${inlineButton} >>> section`);
+      if (!preview) throw new Error('Missing inline preview');
+      await preview.screenshot({ path: fileURLToPath(image) });
+
+      await tab.evaluate(() => window.scrollTo(0, 0));
+      await expectMovedPreview('.wrap_jv_header');
+
+      await tab.waitForFunction(selector =>
+        document.querySelector(selector)?.shadowRoot?.querySelector('details p')?.textContent?.includes('모집부문'),
+      { timeout: 8_000 }, inlineButton);
+      const extra = await tab.$eval(inlineButton, host => {
+        const root = host.shadowRoot!;
+        return Array.from(root.querySelectorAll('dd')).slice(3).map(field => field.textContent);
       });
-      await tab.screenshot({ path: fileURLToPath(image), clip });
+      expect(extra).toEqual([
+        '경력무관(신입포함)', '월급 240 만원 (주 40시간)', '학력무관(예정자 가능)',
+        '주 6일(월~토) 04:30~08:30', '계약직, 파견직', '서울 서초구',
+        '인근거주자, 해당직무 근무경험, 문서작성 우수자',
+      ]);
+      const summary = `${inlineButton} >>> summary`;
+      await tab.click(summary);
+      await tab.waitForSelector(`${inlineButton} >>> details[open] p`, { visible: true, timeout: 5_000 });
+
+      async function expectMovedPreview(wrapper: string) {
+        const selector = `${wrapper} > .jv_header + ${inlineButton}`;
+        await tab.waitForSelector(selector, { visible: true, timeout: 8_000 });
+        expect(await tab.$$(inlineButton)).toHaveLength(1);
+        expect(await tab.$eval(selector, (host, initial) => host === initial, originalHost)).toBe(true);
+        await expectOpenPreview(tab, fields);
+        const visible = await tab.$eval(selector, host => {
+          const button = host.shadowRoot?.querySelector('button');
+          const preview = host.shadowRoot?.querySelector('section');
+          return [button, preview].every(element => {
+            if (!element) return false;
+            const rect = element.getBoundingClientRect();
+            return rect.top >= 0 && rect.bottom <= innerHeight
+              && document.elementFromPoint(rect.left + rect.width / 2, rect.top + rect.height / 2) === host;
+          });
+        });
+        expect(visible).toBe(true);
+      }
     } finally {
       await browser.close();
     }
@@ -87,7 +169,30 @@ async function expectOneInlineButton(tab: Page) {
   expect(await tab.$eval(inlineButton, host => {
     const button = host.shadowRoot?.querySelector('button');
     return { text: button?.textContent, disabled: button?.disabled };
-  })).toEqual({ text: '붙다', disabled: true });
+  })).toEqual({ text: '붙다 · 공고 확인', disabled: false });
+}
+
+async function expectInlinePreview(tab: Page, values: string[]) {
+  const before = tab.url();
+  await tab.click(`${inlineButton} >>> button`);
+  await tab.waitForSelector(`${inlineButton} >>> section:not([hidden])`, { visible: true, timeout: 5_000 });
+  expect(tab.url()).toBe(before);
+  await expectOpenPreview(tab, values);
+}
+
+async function expectOpenPreview(tab: Page, values: string[]) {
+  expect(await tab.$eval(inlineButton, host => {
+    const root = host.shadowRoot;
+    return {
+      expanded: root?.querySelector('button')?.getAttribute('aria-expanded'),
+      labels: Array.from(root?.querySelectorAll('dt') ?? [], element => element.textContent),
+      values: Array.from(root?.querySelectorAll('dd') ?? [], element => element.textContent).slice(0, 3),
+    };
+  })).toEqual({
+    expanded: 'true',
+    labels: ['회사명', '공고 제목', '마감일', '경력', '급여', '학력', '근무일시', '근무형태', '근무지역', '우대사항'],
+    values,
+  });
 }
 
 test.each([
