@@ -113,7 +113,11 @@ test.skipIf(process.env.BOOTDA_TEST_LIVE_SARAMIN !== '1')(
   55_000,
 );
 
-async function verifyPostingPopup(url: string, html: string | null, expected: string[] | null) {
+test('Chrome popup rejects a previous posting after the URL changes', async () => {
+  await verifyPostingPopup(fixtureUrl, fixtureHeader + fixturePeriod, null, '456');
+}, 45_000);
+
+async function verifyPostingPopup(url: string, html: string | null, expected: string[] | null, nextId?: string) {
   const manifest = JSON.parse(await readFile(new URL('manifest.json', build), 'utf8'));
   const browser = await puppeteer.launch({ headless: false, enableExtensions: true });
   try {
@@ -123,12 +127,14 @@ async function verifyPostingPopup(url: string, html: string | null, expected: st
 
     const tab = await browser.newPage();
     if (html !== null) {
+      const fixture = `<section class="jview jview-0-123"><div class="wrap_jv_header">${html.replace('class="jv_header"', 'class="jv_header" data-rec_idx="123"')}</div></section>`;
       await tab.setRequestInterception(true);
       tab.on('request', request => request.url() === url
-        ? request.respond({ contentType: 'text/html; charset=utf-8', body: html })
+        ? request.respond({ contentType: 'text/html; charset=utf-8', body: fixture })
         : request.abort());
     }
     await tab.goto(url, { waitUntil: 'domcontentloaded', timeout: 20_000 });
+    if (nextId) await tab.evaluate(id => history.pushState(null, '', `?rec_idx=${id}`), nextId);
     if (html === null) await tab.waitForSelector('.jv_howto .info_period .end', { timeout: 12_000 });
     await tab.bringToFront();
     await tab.triggerExtensionAction(extension);
@@ -141,7 +147,9 @@ async function verifyPostingPopup(url: string, html: string | null, expected: st
     if (expected === null) {
       await popup.waitForSelector('[role="status"]', { visible: true, timeout: 5_000 });
       expect(await popup.$eval('[role="status"]', element => element.textContent))
-        .toBe('사람인 채용공고 상세 페이지를 열어 주세요.');
+        .toBe(nextId
+          ? '공고 정보를 찾지 못했습니다. 상세 화면이 모두 열린 후 다시 시도해 주세요.'
+          : '사람인 채용공고 상세 페이지를 열어 주세요.');
       expect(await popup.$('dl')).toBeNull();
     } else {
       await popup.waitForSelector('dl dd', { visible: true, timeout: 5_000 });
