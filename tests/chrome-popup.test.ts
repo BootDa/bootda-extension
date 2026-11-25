@@ -32,7 +32,7 @@ test('Chrome refreshes a late deadline and hides the previous posting during nav
     await tab.evaluate(floatingHeader => {
       document.body.insertAdjacentHTML('afterbegin',
         `<div class="jv_header_float" style="position: fixed; inset: 0 0 auto">${floatingHeader}</div>`);
-    }, header.replace('예시 회사', '고정 헤더 회사'));
+    }, header.replace('class="jv_header"', 'class="jv_header" data-rec_idx="123"').replace('예시 회사', '고정 헤더 회사'));
     await tab.waitForSelector(`.jv_header_float > .jv_header + ${inlineButton}`, { timeout: 5_000 });
     await expectOneInlineButton(tab);
     await expectOpenPreview(tab, fields);
@@ -54,11 +54,16 @@ test('Chrome refreshes a late deadline and hides the previous posting during nav
     expect(new URL(tab.url()).searchParams.get('rec_idx')).toBe('456');
     await tab.waitForSelector(inlineButton, { hidden: true, timeout: 5_000 });
     expect(await tab.$eval('.jview-0-123 .company', element => element.textContent)).toContain('예시 회사');
-    await tab.evaluate(nextPosting => {
+    await tab.evaluate((nextPosting, oldHeader) => {
       document.body.insertAdjacentHTML('beforeend', nextPosting);
-    }, posting(456, header.replace('예시 회사', '두 번째 회사')));
+      document.body.insertAdjacentHTML('afterbegin',
+        `<div class="jv_header_float" style="position: fixed; inset: 0 0 auto">${oldHeader}</div>`);
+    }, posting(456, header.replace('예시 회사', '두 번째 회사')),
+    header.replace('class="jv_header"', 'class="jv_header" data-rec_idx="123"'));
     expect(await tab.$eval('.jview-0-456 .company', element => element.textContent)).toContain('두 번째 회사');
     await expectOneInlineButton(tab);
+    expect(await tab.$eval(inlineButton, host => Boolean(host.closest('.jview-0-456')))).toBe(true);
+    await tab.evaluate(() => document.querySelector('.jv_header_float')?.remove());
     expect(await tab.$eval(inlineButton, host => host.shadowRoot?.querySelector('section')?.hidden)).toBe(true);
     await expectInlinePreview(tab, ['두 번째 회사', '웹 개발자 채용', '미확인']);
     await tab.click(`${inlineButton} >>> button`);

@@ -147,7 +147,7 @@ export default defineContentScript({
         return;
       }
 
-      const floating = document.querySelector(`.jv_header_float > ${applyHeader}`);
+      const floating = document.querySelector(`.jv_header_float > ${applyHeader}[data-rec_idx="${id}"]`);
       const bounds = floating?.getBoundingClientRect();
       const header = floating && bounds && bounds.width > 0 && bounds.height > 0
         && bounds.bottom > 0 && bounds.top < window.innerHeight
@@ -159,25 +159,42 @@ export default defineContentScript({
         header.after(host);
         if (restoreFocus) button.focus({ preventScroll: true });
       }
-      refreshPreview();
     }
 
     placeButton(location.href);
     let frame: number | undefined;
+    let refreshPending = false;
     function schedulePlacement() {
       if (frame !== undefined) return;
       frame = requestAnimationFrame(() => {
         frame = undefined;
         placeButton(location.href);
+        if (refreshPending) {
+          refreshPending = false;
+          refreshPreview();
+        }
       });
     }
-    const observer = new MutationObserver(schedulePlacement);
+    function scheduleRefresh() {
+      refreshPending = true;
+      schedulePlacement();
+    }
+    const observer = new MutationObserver(records => {
+      if (postingRoot && records.some(record => postingRoot?.contains(record.target))) {
+        scheduleRefresh();
+      } else {
+        schedulePlacement();
+      }
+    });
     observer.observe(document.body, {
-      childList: true, characterData: true, subtree: true, attributes: true, attributeFilter: ['class', 'style', 'hidden'],
+      childList: true, characterData: true, subtree: true, attributes: true,
+      attributeFilter: ['class', 'style', 'hidden', 'data-rec_idx'],
     });
     ctx.addEventListener(window, 'scroll', schedulePlacement, { passive: true });
     ctx.addEventListener(window, 'resize', schedulePlacement);
-    ctx.addEventListener(document, 'load', schedulePlacement, { capture: true });
+    ctx.addEventListener(document, 'load', event => {
+      if (event.target instanceof HTMLIFrameElement && postingRoot?.contains(event.target)) scheduleRefresh();
+    }, { capture: true });
     ctx.addEventListener(window, 'wxt:locationchange', event => placeButton(event.newUrl.href));
     ctx.onInvalidated(() => {
       observer.disconnect();
