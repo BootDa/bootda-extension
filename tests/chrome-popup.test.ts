@@ -1,6 +1,6 @@
 import { mkdir, readFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
-import puppeteer from 'puppeteer';
+import puppeteer, { type Page } from 'puppeteer';
 import { expect, test } from 'vitest';
 import { version } from '../package.json';
 
@@ -10,6 +10,85 @@ const screenshot = new URL('../coverage/chrome-popup.png', import.meta.url);
 const fixtureUrl = 'https://www.saramin.co.kr/zf_user/jobs/relay/view?rec_idx=123';
 const fixtureHeader = '<div class="jv_header"><a class="company"> 예시 회사 </a><h1 class="tit_job">웹 개발자   채용</h1></div>';
 const fixturePeriod = '<section class="jv_cont jv_howto"><dl class="info_period"><dt>시작일</dt><dd>2026.11.20 09:00</dd><dt class="end">마감일</dt><dd>2026.11.30 18:00</dd></dl></section>';
+const inlineButton = '[data-bootda-saramin-button]';
+
+test('Chrome keeps one inline button when Saramin replaces the posting header', async () => {
+  const browser = await puppeteer.launch({ headless: false, enableExtensions: true });
+  try {
+    await browser.installExtension(fileURLToPath(build));
+    const tab = await browser.newPage();
+    await tab.setRequestInterception(true);
+    const applyMarkup = '<div class="btn_apply"><button type="button">입사지원</button></div>';
+    const header = fixtureHeader.replace('</div>', `${applyMarkup}</div>`);
+    tab.on('request', request => request.url() === fixtureUrl
+      ? request.respond({ contentType: 'text/html; charset=utf-8', body: header })
+      : request.abort());
+    await tab.goto(fixtureUrl, { waitUntil: 'domcontentloaded' });
+    await expectOneInlineButton(tab);
+
+    await tab.evaluate(nextHeader => {
+      history.pushState(null, '', '?rec_idx=456');
+      const currentHeader = document.querySelector('.jv_header');
+      if (currentHeader) currentHeader.outerHTML = nextHeader;
+    }, header.replace('예시 회사', '두 번째 회사'));
+    expect(new URL(tab.url()).searchParams.get('rec_idx')).toBe('456');
+    expect(await tab.$eval('.jv_header .company', element => element.textContent)).toContain('두 번째 회사');
+    await expectOneInlineButton(tab);
+
+    await tab.evaluate(() => history.pushState(null, '', '/zf_user/jobs/public/list'));
+    await tab.waitForSelector(inlineButton, { hidden: true, timeout: 5_000 });
+    expect(await tab.$$(inlineButton)).toHaveLength(0);
+  } finally {
+    await browser.close();
+  }
+}, 30_000);
+
+test.skipIf(process.env.BOOTDA_TEST_LIVE_SARAMIN !== '1')(
+  'Chrome shows one inline button per real posting when navigating in the same tab',
+  async () => {
+    const browser = await puppeteer.launch({ headless: false, enableExtensions: true });
+    try {
+      await browser.installExtension(fileURLToPath(build));
+      const tab = await browser.newPage();
+      for (const [id, company] of [['55644102', '삼신테크'], ['55617351', '호서대학교'], ['55644102', '삼신테크']]) {
+        await tab.goto(`https://www.saramin.co.kr/zf_user/jobs/relay/view?rec_idx=${id}&view_type=etc`, {
+          waitUntil: 'domcontentloaded', timeout: 20_000,
+        });
+        await expectOneInlineButton(tab);
+        expect(await tab.$eval('.jv_header .company', element => element.textContent)).toContain(company);
+        const bounds = await tab.$eval(inlineButton, host => {
+          const apply = host.previousElementSibling?.querySelector('.btn_apply > button')?.getBoundingClientRect();
+          const button = host.shadowRoot?.querySelector('button')?.getBoundingClientRect();
+          if (!apply || !button) throw new Error('Missing application or Bootda button');
+          return { gap: button.top - apply.bottom, rightOffset: Math.abs(button.right - apply.right) };
+        });
+        expect(bounds.gap).toBeGreaterThanOrEqual(0);
+        expect(bounds.gap).toBeLessThanOrEqual(32);
+        expect(bounds.rightOffset).toBeLessThanOrEqual(2);
+      }
+      const image = new URL('saramin-inline-button.png', screenshot);
+      await mkdir(new URL('./', image), { recursive: true });
+      const clip = await tab.$eval(inlineButton, host => {
+        const row = host.getBoundingClientRect();
+        const header = host.previousElementSibling!.getBoundingClientRect();
+        return { x: header.x, y: header.y, width: header.width, height: row.bottom - header.y };
+      });
+      await tab.screenshot({ path: fileURLToPath(image), clip });
+    } finally {
+      await browser.close();
+    }
+  },
+  90_000,
+);
+
+async function expectOneInlineButton(tab: Page) {
+  await tab.waitForSelector(`.jv_header + ${inlineButton}`, { visible: true, timeout: 12_000 });
+  expect(await tab.$$(inlineButton)).toHaveLength(1);
+  expect(await tab.$eval(inlineButton, host => {
+    const button = host.shadowRoot?.querySelector('button');
+    return { text: button?.textContent, disabled: button?.disabled };
+  })).toEqual({ text: '붙다', disabled: true });
+}
 
 test.each([
   { name: 'dated posting', url: fixtureUrl, html: fixtureHeader + fixturePeriod,
