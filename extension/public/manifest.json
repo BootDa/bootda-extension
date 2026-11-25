@@ -1,7 +1,9 @@
 {
   "manifest_version": 3,
   "name": "붙다 · Bootda Extension",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "채용공고를 Google Sheets에 정리하는 도구 (개발용 초기 버전)",
-  "action": { "default_popup": "index.html", "default_title": "붙다" }
+  "action": {
+    "default_title": "붙다"
+  }
 }

@@ -1,12 +1,14 @@
 import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
+import { Badge } from '@/components/ui/badge';
+import { version } from '../../public/manifest.json';
 import './style.css';
 
 function App() {
   return <main className="w-[320px] p-5 text-slate-900">
     <header className="flex items-center justify-between gap-2">
       <h1 className="text-xl font-bold tracking-tight">붙다</h1>
-      <span className="rounded bg-slate-100 px-2 py-1 text-xs text-slate-600">개발용 0.1.0</span>
+      <Badge variant="secondary">개발용 {version}</Badge>
     </header>
     <p className="mt-3 text-sm leading-relaxed text-slate-600">채용공고 확인부터 지원예정목록 정리까지.</p>
     <section className="mt-4 rounded-lg border border-slate-200 p-3" aria-label="개발 상태">
