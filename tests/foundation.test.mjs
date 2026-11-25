@@ -12,12 +12,19 @@ test('Manifest V3, version matches package', () => {
   assert.equal(manifest.version, sourceManifest.version);
   assert.equal(manifest.version, pkg.version);
 });
-test('extension can read the active tab without permanent site access', () => {
+test('extension reads the active tab and injects only on Saramin detail routes', () => {
   assert.deepEqual([...manifest.permissions].sort(), ['activeTab', 'scripting']);
   assert.equal(manifest.host_permissions, undefined);
   assert.equal(manifest.optional_permissions, undefined);
   assert.equal(manifest.optional_host_permissions, undefined);
-  assert.equal(manifest.content_scripts, undefined);
+  assert.equal(manifest.content_scripts.length, 1);
+  assert.deepEqual([...manifest.content_scripts[0].matches].sort(), [
+    'https://saramin.co.kr/zf_user/jobs/relay/view*',
+    'https://saramin.co.kr/zf_user/jobs/view/*',
+    'https://www.saramin.co.kr/zf_user/jobs/relay/view*',
+    'https://www.saramin.co.kr/zf_user/jobs/view/*',
+  ]);
+  assert.notEqual(manifest.content_scripts[0].all_frames, true);
 });
 
 test('manifest opens a popup with a React mount point', () => {
