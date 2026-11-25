@@ -25,6 +25,7 @@ test('Chrome keeps one inline button when Saramin replaces the posting header', 
       : request.abort());
     await tab.goto(fixtureUrl, { waitUntil: 'domcontentloaded' });
     await expectOneInlineButton(tab);
+    await expectInlinePreview(tab, ['예시 회사', '웹 개발자 채용', '미확인']);
 
     await tab.evaluate(nextHeader => {
       history.pushState(null, '', '?rec_idx=456');
@@ -34,6 +35,10 @@ test('Chrome keeps one inline button when Saramin replaces the posting header', 
     expect(new URL(tab.url()).searchParams.get('rec_idx')).toBe('456');
     expect(await tab.$eval('.jv_header .company', element => element.textContent)).toContain('두 번째 회사');
     await expectOneInlineButton(tab);
+    expect(await tab.$eval(inlineButton, host => host.shadowRoot?.querySelector('section')?.hidden)).toBe(true);
+    await expectInlinePreview(tab, ['두 번째 회사', '웹 개발자 채용', '미확인']);
+    await tab.click(`${inlineButton} >>> button`);
+    expect(await tab.$eval(inlineButton, host => host.shadowRoot?.querySelector('section')?.hidden)).toBe(true);
 
     await tab.evaluate(() => history.pushState(null, '', '/zf_user/jobs/public/list'));
     await tab.waitForSelector(inlineButton, { hidden: true, timeout: 5_000 });
@@ -66,14 +71,17 @@ test.skipIf(process.env.BOOTDA_TEST_LIVE_SARAMIN !== '1')(
         expect(bounds.gap).toBeLessThanOrEqual(32);
         expect(bounds.rightOffset).toBeLessThanOrEqual(2);
       }
-      const image = new URL('saramin-inline-button.png', screenshot);
+      await tab.waitForSelector('.jv_howto .info_period .end', { timeout: 12_000 });
+      await expectInlinePreview(tab, [
+        '삼신테크',
+        '[강남역/주6일/오전4시간] 삼성전자 조간 스크랩 업무 채용',
+        '2026.11.30 08:00',
+      ]);
+      const image = new URL('saramin-inline-preview.png', screenshot);
       await mkdir(new URL('./', image), { recursive: true });
-      const clip = await tab.$eval(inlineButton, host => {
-        const row = host.getBoundingClientRect();
-        const header = host.previousElementSibling!.getBoundingClientRect();
-        return { x: header.x, y: header.y, width: header.width, height: row.bottom - header.y };
-      });
-      await tab.screenshot({ path: fileURLToPath(image), clip });
+      const preview = await tab.$(`${inlineButton} >>> section`);
+      if (!preview) throw new Error('Missing inline preview');
+      await preview.screenshot({ path: fileURLToPath(image) });
     } finally {
       await browser.close();
     }
@@ -87,7 +95,22 @@ async function expectOneInlineButton(tab: Page) {
   expect(await tab.$eval(inlineButton, host => {
     const button = host.shadowRoot?.querySelector('button');
     return { text: button?.textContent, disabled: button?.disabled };
-  })).toEqual({ text: '붙다', disabled: true });
+  })).toEqual({ text: '붙다 · 공고 확인', disabled: false });
+}
+
+async function expectInlinePreview(tab: Page, values: string[]) {
+  const before = tab.url();
+  await tab.click(`${inlineButton} >>> button`);
+  await tab.waitForSelector(`${inlineButton} >>> section:not([hidden])`, { visible: true, timeout: 5_000 });
+  expect(tab.url()).toBe(before);
+  expect(await tab.$eval(inlineButton, host => {
+    const root = host.shadowRoot;
+    return {
+      expanded: root?.querySelector('button')?.getAttribute('aria-expanded'),
+      labels: Array.from(root?.querySelectorAll('dt') ?? [], element => element.textContent),
+      values: Array.from(root?.querySelectorAll('dd') ?? [], element => element.textContent),
+    };
+  })).toEqual({ expanded: 'true', labels: ['회사명', '공고 제목', '마감일'], values });
 }
 
 test.each([
