@@ -20,6 +20,18 @@ pnpm run verify:foundation
 
 Chrome `chrome://extensions` → 개발자 모드 → 압축해제된 확장 프로그램 로드 → `extension/dist/chrome-mv3` 선택. 팝업에서 초기 화면을 확인합니다. OAuth 및 API 비밀값은 초기 화면 실행에 필요하지 않습니다.
 
+### 실제 Chrome 팝업 테스트
+
+데스크톱 환경에서 Chrome for Testing을 한 번 설치한 후 빌드와 테스트를 실행합니다.
+
+```sh
+pnpm exec puppeteer browsers install chrome
+pnpm run build
+pnpm run test:chrome
+```
+
+테스트는 임시 Chrome 프로필에 확장을 로드하고 툴바 동작으로 팝업을 엽니다. 버전 배지의 문구와 스타일을 검사한 뒤 `coverage/chrome-popup.png`에 화면을 저장합니다.
+
 ## 문서
 
 - [개발 지침](AGENTS.md)

@@ -12,7 +12,8 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "verify:foundation": "node --test tests/foundation.test.mjs",
-    "postinstall": "wxt prepare"
+    "postinstall": "wxt prepare",
+    "test:chrome": "vitest run --mode chrome"
   },
   "dependencies": {
     "@radix-ui/react-slot": "^1.2.4",
@@ -29,6 +30,7 @@
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.0.0",
     "@vitejs/plugin-react": "^4.7.0",
+    "puppeteer": "25.18.1",
     "tailwindcss": "^4.1.0",
     "typescript": "^5.7.0",
     "vite": "^6.3.6",
