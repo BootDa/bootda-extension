@@ -4,7 +4,7 @@
 
 ## 상태
 
-초기 개발 기반(0.1.1). WXT, TypeScript, React, Tailwind CSS v4, shadcn/ui를 사용하고 공고 데이터 검증에는 Zod를 사용합니다. 사람인/잡플래닛 수집, Google OAuth 및 Sheets, LLM API는 아직 구현되지 않았습니다. 기존 Bootda 웹 서비스와 별도 제품입니다.
+개발 버전 0.2.0. 사람인 상세 공고를 열고 확장 팝업에서 **현재 공고 읽기**를 누르면 회사명, 공고 제목, 마감일을 확인할 수 있습니다. 잡플래닛 조회, Google Sheets 저장, LLM 분석은 구현 전입니다.
 
 ## 로컬 실행
 
@@ -30,7 +30,9 @@ pnpm run build
 pnpm run test:chrome
 ```
 
-테스트는 임시 Chrome 프로필에 확장을 로드하고 툴바 동작으로 팝업을 엽니다. 버전 배지의 문구와 스타일을 검사한 뒤 `coverage/chrome-popup.png`에 화면을 저장합니다.
+테스트는 임시 Chrome 프로필에 확장을 로드하고 툴바 동작으로 팝업을 엽니다. 버전 배지의 문구와 스타일, 사람인 공고 예제의 필드와 오류 안내를 검사합니다. 팝업 화면은 `coverage/chrome-popup.png`에 저장됩니다.
+
+PowerShell에서 `$env:BOOTDA_TEST_LIVE_SARAMIN='1'`을 설정하면 같은 명령으로 실제 사람인 공고(55644102)도 확인합니다. 이 검증은 외부 사이트 접속과 해당 공고 공개 상태에 의존합니다.
 
 ## 문서
 
