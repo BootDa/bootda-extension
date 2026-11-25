@@ -10,7 +10,8 @@ export function readSaraminDocument(expectedUrl: string): SaraminDetails | null 
   const text = (element: Element | null) =>
     element?.textContent?.replace(/\s+/g, ' ').trim() || null;
 
-  const header = document.querySelector('.jv_header');
+  const header = document.querySelector('.wrap_jv_header > .jv_header')
+    ?? document.querySelector('.jv_header:not(.jv_header_float .jv_header)');
   const company = text(header?.querySelector('.company') ?? null);
   const title = text(header?.querySelector('h1.tit_job') ?? null);
   let deadline: string | null = null;

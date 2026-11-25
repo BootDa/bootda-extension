@@ -93,6 +93,7 @@ export default defineContentScript({
     });
 
     let postingKey: string | undefined;
+    let originalHeader: Element | null = null;
     function placeButton(url: string) {
       let key: string | undefined;
       try {
@@ -101,22 +102,48 @@ export default defineContentScript({
         // The user may have moved to a non-detail route in the same document.
       }
 
-      const header = key ? document.querySelector(applyHeader) : null;
-      if (key !== postingKey || header?.nextElementSibling !== host) closePreview();
+      const original = key ? document.querySelector(`.wrap_jv_header > ${applyHeader}`) : null;
+      if (key !== postingKey || original !== originalHeader) closePreview();
       postingKey = key;
-      if (!header) {
+      originalHeader = original;
+      if (!original) {
         host.remove();
         return;
       }
-      if (header.nextElementSibling !== host) header.after(host);
+
+      const floating = document.querySelector(`.jv_header_float > ${applyHeader}`);
+      const bounds = floating?.getBoundingClientRect();
+      const header = floating && bounds && bounds.width > 0 && bounds.height > 0
+        && bounds.bottom > 0 && bounds.top < window.innerHeight
+        && getComputedStyle(floating).visibility === 'visible'
+        ? floating
+        : original;
+      if (header.nextElementSibling !== host) {
+        const restoreFocus = shadow.activeElement === button;
+        header.after(host);
+        if (restoreFocus) button.focus({ preventScroll: true });
+      }
     }
 
     placeButton(location.href);
-    const observer = new MutationObserver(() => placeButton(location.href));
-    observer.observe(document.body, { childList: true, subtree: true });
+    let frame: number | undefined;
+    function schedulePlacement() {
+      if (frame !== undefined) return;
+      frame = requestAnimationFrame(() => {
+        frame = undefined;
+        placeButton(location.href);
+      });
+    }
+    const observer = new MutationObserver(schedulePlacement);
+    observer.observe(document.body, {
+      childList: true, subtree: true, attributes: true, attributeFilter: ['class', 'style', 'hidden'],
+    });
+    ctx.addEventListener(window, 'scroll', schedulePlacement, { passive: true });
+    ctx.addEventListener(window, 'resize', schedulePlacement);
     ctx.addEventListener(window, 'wxt:locationchange', event => placeButton(event.newUrl.href));
     ctx.onInvalidated(() => {
       observer.disconnect();
+      if (frame !== undefined) cancelAnimationFrame(frame);
       host.remove();
     });
   },
