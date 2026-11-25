@@ -7,6 +7,78 @@ import { version } from '../package.json';
 const build = new URL('../extension/dist/chrome-mv3/', import.meta.url);
 const screenshot = new URL('../coverage/chrome-popup.png', import.meta.url);
 
+const fixtureUrl = 'https://www.saramin.co.kr/zf_user/jobs/relay/view?rec_idx=123';
+const fixtureHeader = '<div class="jv_header"><a class="company"> 예시 회사 </a><h1 class="tit_job">웹 개발자   채용</h1></div>';
+const fixturePeriod = '<section class="jv_cont jv_howto"><dl class="info_period"><dt>시작일</dt><dd>2026.11.20 09:00</dd><dt class="end">마감일</dt><dd>2026.11.30 18:00</dd></dl></section>';
+
+test.each([
+  { name: 'dated posting', url: fixtureUrl, html: fixtureHeader + fixturePeriod,
+    expected: ['예시 회사', '웹 개발자 채용', '2026.11.30 18:00'] },
+  { name: 'posting without deadline', url: fixtureUrl, html: fixtureHeader,
+    expected: ['예시 회사', '웹 개발자 채용', '미확인'] },
+  { name: 'unsupported page', url: 'https://www.saramin.co.kr/zf_user/jobs/public/list', html: fixtureHeader,
+    expected: null },
+])('Chrome previews a Saramin $name', async ({ url, html, expected }) => {
+  await verifyPostingPopup(url, html, expected);
+}, 45_000);
+
+test.skipIf(process.env.BOOTDA_TEST_LIVE_SARAMIN !== '1')(
+  'Chrome previews the public Saramin posting 55644102',
+  async () => {
+    await verifyPostingPopup(
+      'https://www.saramin.co.kr/zf_user/jobs/relay/view?rec_idx=55644102&view_type=etc',
+      null,
+      ['삼신테크', '[강남역/주6일/오전4시간] 삼성전자 조간 스크랩 업무 채용', '2026.11.30 08:00'],
+    );
+  },
+  55_000,
+);
+
+async function verifyPostingPopup(url: string, html: string | null, expected: string[] | null) {
+  const manifest = JSON.parse(await readFile(new URL('manifest.json', build), 'utf8'));
+  const browser = await puppeteer.launch({ headless: false, enableExtensions: true });
+  try {
+    const extensionId = await browser.installExtension(fileURLToPath(build));
+    const extension = (await browser.extensions()).get(extensionId);
+    if (!extension) throw new Error('Chrome did not load the unpacked extension');
+
+    const tab = await browser.newPage();
+    if (html !== null) {
+      await tab.setRequestInterception(true);
+      tab.on('request', request => request.url() === url
+        ? request.respond({ contentType: 'text/html; charset=utf-8', body: html })
+        : request.abort());
+    }
+    await tab.goto(url, { waitUntil: 'domcontentloaded', timeout: 20_000 });
+    if (html === null) await tab.waitForSelector('.jv_howto .info_period .end', { timeout: 12_000 });
+    await tab.bringToFront();
+    await tab.triggerExtensionAction(extension);
+    const popupUrl = `chrome-extension://${extensionId}/${manifest.action.default_popup}`;
+    const target = await browser.waitForTarget(candidate => candidate.url() === popupUrl, { timeout: 5_000 });
+    const popup = await target.asPage();
+    await popup.waitForSelector('button', { visible: true, timeout: 5_000 });
+    await popup.click('button');
+
+    if (expected === null) {
+      await popup.waitForSelector('[role="status"]', { visible: true, timeout: 5_000 });
+      expect(await popup.$eval('[role="status"]', element => element.textContent))
+        .toBe('사람인 채용공고 상세 페이지를 열어 주세요.');
+      expect(await popup.$('dl')).toBeNull();
+    } else {
+      await popup.waitForSelector('dl dd', { visible: true, timeout: 5_000 });
+      expect(await popup.$$eval('dl dd', fields => fields.map(field => field.textContent))).toEqual(expected);
+    }
+
+    if (html === null) {
+      const liveScreenshot = new URL('saramin-popup.png', screenshot);
+      await mkdir(new URL('./', liveScreenshot), { recursive: true });
+      await popup.screenshot({ path: fileURLToPath(liveScreenshot) });
+    }
+  } finally {
+    await browser.close();
+  }
+}
+
 test('Chrome opens the extension popup with a styled version badge', async () => {
   const manifest = JSON.parse(await readFile(new URL('manifest.json', build), 'utf8'));
   const browser = await puppeteer.launch({ headless: false, enableExtensions: true });

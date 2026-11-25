@@ -12,8 +12,8 @@ test('Manifest V3, version matches package', () => {
   assert.equal(manifest.version, sourceManifest.version);
   assert.equal(manifest.version, pkg.version);
 });
-test('foundation requests no site or API permissions', () => {
-  assert.equal(manifest.permissions, undefined);
+test('extension can read the active tab without permanent site access', () => {
+  assert.deepEqual([...manifest.permissions].sort(), ['activeTab', 'scripting']);
   assert.equal(manifest.host_permissions, undefined);
   assert.equal(manifest.optional_permissions, undefined);
   assert.equal(manifest.optional_host_permissions, undefined);
