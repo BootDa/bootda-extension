@@ -12,7 +12,7 @@ const fixtureHeader = '<div class="jv_header"><a class="company"> 예시 회사 
 const fixturePeriod = '<section class="jv_cont jv_howto"><dl class="info_period"><dt>시작일</dt><dd>2026.11.20 09:00</dd><dt class="end">마감일</dt><dd>2026.11.30 18:00</dd></dl></section>';
 const inlineButton = '[data-bootda-saramin-button]';
 
-test('Chrome keeps one inline button when Saramin replaces the posting header', async () => {
+test('Chrome refreshes a late deadline and hides the previous posting during navigation', async () => {
   const browser = await puppeteer.launch({ headless: false, enableExtensions: true });
   try {
     await browser.installExtension(fileURLToPath(build));
@@ -20,8 +20,10 @@ test('Chrome keeps one inline button when Saramin replaces the posting header', 
     await tab.setRequestInterception(true);
     const applyMarkup = '<div class="btn_apply"><button type="button">입사지원</button></div>';
     const header = fixtureHeader.replace('</div>', `${applyMarkup}</div>`);
+    const posting = (id: number, markup: string) =>
+      `<section class="jview jview-0-${id}"><div class="wrap_jv_header">${markup}</div></section>`;
     tab.on('request', request => request.url() === fixtureUrl
-      ? request.respond({ contentType: 'text/html; charset=utf-8', body: `<div class="wrap_jv_header">${header}</div>` })
+      ? request.respond({ contentType: 'text/html; charset=utf-8', body: posting(123, header) })
       : request.abort());
     await tab.goto(fixtureUrl, { waitUntil: 'domcontentloaded' });
     await expectOneInlineButton(tab);
@@ -42,13 +44,20 @@ test('Chrome keeps one inline button when Saramin replaces the posting header', 
     await expectOneInlineButton(tab);
     await expectOpenPreview(tab, fields);
 
-    await tab.evaluate(nextHeader => {
-      history.pushState(null, '', '?rec_idx=456');
-      const currentHeader = document.querySelector('.jv_header');
-      if (currentHeader) currentHeader.outerHTML = nextHeader;
-    }, header.replace('예시 회사', '두 번째 회사'));
+    await tab.evaluate(period => document.querySelector('.jview')?.insertAdjacentHTML('beforeend', period), fixturePeriod);
+    await tab.waitForFunction((selector, value) =>
+      document.querySelector(selector)?.shadowRoot?.querySelectorAll('dd')[2]?.textContent === value,
+    { timeout: 5_000 }, inlineButton, '2026.11.30 18:00');
+    await expectOpenPreview(tab, ['예시 회사', '웹 개발자 채용', '2026.11.30 18:00']);
+
+    await tab.evaluate(() => history.pushState(null, '', '?rec_idx=456'));
     expect(new URL(tab.url()).searchParams.get('rec_idx')).toBe('456');
-    expect(await tab.$eval('.jv_header .company', element => element.textContent)).toContain('두 번째 회사');
+    await tab.waitForSelector(inlineButton, { hidden: true, timeout: 5_000 });
+    expect(await tab.$eval('.jview-0-123 .company', element => element.textContent)).toContain('예시 회사');
+    await tab.evaluate(nextPosting => {
+      document.body.insertAdjacentHTML('beforeend', nextPosting);
+    }, posting(456, header.replace('예시 회사', '두 번째 회사')));
+    expect(await tab.$eval('.jview-0-456 .company', element => element.textContent)).toContain('두 번째 회사');
     await expectOneInlineButton(tab);
     expect(await tab.$eval(inlineButton, host => host.shadowRoot?.querySelector('section')?.hidden)).toBe(true);
     await expectInlinePreview(tab, ['두 번째 회사', '웹 개발자 채용', '미확인']);
@@ -108,6 +117,22 @@ test.skipIf(process.env.BOOTDA_TEST_LIVE_SARAMIN !== '1')(
       await tab.evaluate(() => window.scrollTo(0, 0));
       await expectMovedPreview('.wrap_jv_header');
 
+      await tab.waitForFunction(selector =>
+        document.querySelector(selector)?.shadowRoot?.querySelector('details p')?.textContent?.includes('모집부문'),
+      { timeout: 8_000 }, inlineButton);
+      const extra = await tab.$eval(inlineButton, host => {
+        const root = host.shadowRoot!;
+        return Array.from(root.querySelectorAll('dd')).slice(3).map(field => field.textContent);
+      });
+      expect(extra).toEqual([
+        '경력무관(신입포함)', '월급 240 만원 (주 40시간)', '학력무관(예정자 가능)',
+        '주 6일(월~토) 04:30~08:30', '계약직, 파견직', '서울 서초구',
+        '인근거주자, 해당직무 근무경험, 문서작성 우수자',
+      ]);
+      const summary = `${inlineButton} >>> summary`;
+      await tab.click(summary);
+      await tab.waitForSelector(`${inlineButton} >>> details[open] p`, { visible: true, timeout: 5_000 });
+
       async function expectMovedPreview(wrapper: string) {
         const selector = `${wrapper} > .jv_header + ${inlineButton}`;
         await tab.waitForSelector(selector, { visible: true, timeout: 8_000 });
@@ -156,9 +181,13 @@ async function expectOpenPreview(tab: Page, values: string[]) {
     return {
       expanded: root?.querySelector('button')?.getAttribute('aria-expanded'),
       labels: Array.from(root?.querySelectorAll('dt') ?? [], element => element.textContent),
-      values: Array.from(root?.querySelectorAll('dd') ?? [], element => element.textContent),
+      values: Array.from(root?.querySelectorAll('dd') ?? [], element => element.textContent).slice(0, 3),
     };
-  })).toEqual({ expanded: 'true', labels: ['회사명', '공고 제목', '마감일'], values });
+  })).toEqual({
+    expanded: 'true',
+    labels: ['회사명', '공고 제목', '마감일', '경력', '급여', '학력', '근무일시', '근무형태', '근무지역', '우대사항'],
+    values,
+  });
 }
 
 test.each([

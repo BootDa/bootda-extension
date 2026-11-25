@@ -1,5 +1,6 @@
 import { parseSaraminPostingUrl } from '@/domain/posting';
 import { readSaraminDocument } from '@/domain/saramin-detail';
+import { readSaraminPreview } from '@/domain/saramin-preview';
 import { defineContentScript } from 'wxt/utils/define-content-script';
 
 const applyHeader = '.jv_header:has(.btn_apply > :is(button, a))';
@@ -41,10 +42,15 @@ export default defineContentScript({
         color: #0f172a;
         font: 14px/1.5 system-ui, sans-serif;
         overflow-wrap: anywhere;
+        max-height: min(55vh, 480px);
+        overflow: auto;
       }
       dl, dd, p { margin: 0; }
       dt { font-weight: 600; }
       dd + dt { margin-top: 8px; }
+      details { margin-top: 12px; }
+      summary { cursor: pointer; font-weight: 600; }
+      details p { white-space: pre-wrap; margin-top: 8px; }
     `;
     const button = document.createElement('button');
     button.type = 'button';
@@ -56,7 +62,10 @@ export default defineContentScript({
     preview.setAttribute('aria-live', 'polite');
     shadow.append(style, button, preview);
 
+    let postingRoot: Element | null = null;
+    let displayed = '';
     function closePreview() {
+      displayed = '';
       preview.hidden = true;
       preview.replaceChildren();
       button.setAttribute('aria-expanded', 'false');
@@ -64,17 +73,33 @@ export default defineContentScript({
     closePreview();
 
     button.addEventListener('click', () => {
+      placeButton(location.href);
+      if (!host.isConnected) return;
       if (!preview.hidden) {
         closePreview();
         return;
       }
-      const details = readSaraminDocument(location.href);
-      if (details) {
+      preview.hidden = false;
+      button.setAttribute('aria-expanded', 'true');
+      refreshPreview();
+    });
+
+    function refreshPreview() {
+      if (preview.hidden || !postingRoot) return;
+      const details = readSaraminDocument(location.href, postingRoot);
+      const extra = details ? readSaraminPreview(postingRoot) : null;
+      const snapshot = JSON.stringify([details, extra]);
+      if (snapshot === displayed) return;
+      displayed = snapshot;
+      const bodyWasOpen = preview.querySelector('details')?.open ?? false;
+      preview.replaceChildren();
+      if (details && extra) {
         const list = document.createElement('dl');
         for (const [label, value] of [
           ['회사명', details.company],
           ['공고 제목', details.title],
           ['마감일', details.deadline ?? '미확인'],
+          ...extra.fields,
         ] as const) {
           const term = document.createElement('dt');
           const description = document.createElement('dd');
@@ -82,15 +107,20 @@ export default defineContentScript({
           description.textContent = value;
           list.append(term, description);
         }
-        preview.append(list);
+        const body = document.createElement('details');
+        body.open = bodyWasOpen;
+        const heading = document.createElement('summary');
+        heading.textContent = '공고 본문';
+        const text = document.createElement('p');
+        text.textContent = extra.body ?? '확인할 수 있는 텍스트 본문이 없습니다.';
+        body.append(heading, text);
+        preview.append(list, body);
       } else {
         const message = document.createElement('p');
         message.textContent = '공고 정보를 찾지 못했습니다. 상세 화면이 열린 뒤 다시 시도해 주세요.';
         preview.append(message);
       }
-      preview.hidden = false;
-      button.setAttribute('aria-expanded', 'true');
-    });
+    }
 
     let postingKey: string | undefined;
     let originalHeader: Element | null = null;
@@ -102,9 +132,15 @@ export default defineContentScript({
         // The user may have moved to a non-detail route in the same document.
       }
 
-      const original = key ? document.querySelector(`.wrap_jv_header > ${applyHeader}`) : null;
-      if (key !== postingKey || original !== originalHeader) closePreview();
+      const id = key?.slice('saramin:'.length);
+      // Saramin marks each complete detail section with its posting ID.
+      const identity = id ? new RegExp(`^jview-\\d+-${id}$`) : null;
+      const root = identity ? Array.from(document.querySelectorAll('.jview'))
+        .find(section => Array.from(section.classList).some(name => identity.test(name))) ?? null : null;
+      const original = root?.querySelector(`.wrap_jv_header > ${applyHeader}`) ?? null;
+      if (key !== postingKey || root !== postingRoot || original !== originalHeader) closePreview();
       postingKey = key;
+      postingRoot = root;
       originalHeader = original;
       if (!original) {
         host.remove();
@@ -123,6 +159,7 @@ export default defineContentScript({
         header.after(host);
         if (restoreFocus) button.focus({ preventScroll: true });
       }
+      refreshPreview();
     }
 
     placeButton(location.href);
@@ -136,10 +173,11 @@ export default defineContentScript({
     }
     const observer = new MutationObserver(schedulePlacement);
     observer.observe(document.body, {
-      childList: true, subtree: true, attributes: true, attributeFilter: ['class', 'style', 'hidden'],
+      childList: true, characterData: true, subtree: true, attributes: true, attributeFilter: ['class', 'style', 'hidden'],
     });
     ctx.addEventListener(window, 'scroll', schedulePlacement, { passive: true });
     ctx.addEventListener(window, 'resize', schedulePlacement);
+    ctx.addEventListener(document, 'load', schedulePlacement, { capture: true });
     ctx.addEventListener(window, 'wxt:locationchange', event => placeButton(event.newUrl.href));
     ctx.onInvalidated(() => {
       observer.disconnect();
