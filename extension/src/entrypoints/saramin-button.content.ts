@@ -18,7 +18,7 @@ export default defineContentScript({
     const shadow = host.attachShadow({ mode: 'open' });
     const style = document.createElement('style');
     style.textContent = `
-      :host { display: grid; justify-items: end; gap: 8px; margin: 8px 0 0; }
+      :host { position: relative; z-index: 2; display: grid; justify-items: end; margin: 8px 0 0; }
       button {
         box-sizing: border-box;
         min-height: 36px;
@@ -33,6 +33,9 @@ export default defineContentScript({
       button:hover { background: #e2e8f0; }
       button:focus-visible { outline: 2px solid #334155; outline-offset: 2px; }
       section {
+        position: absolute;
+        inset-block-start: calc(100% + 8px);
+        inset-inline-end: 0;
         box-sizing: border-box;
         width: min(320px, 100%);
         padding: 12px 14px;
