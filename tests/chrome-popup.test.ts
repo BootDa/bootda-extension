@@ -28,7 +28,20 @@ test('Chrome refreshes a late deadline and hides the previous posting during nav
     await tab.goto(fixtureUrl, { waitUntil: 'domcontentloaded' });
     await expectOneInlineButton(tab);
     const fields = ['예시 회사', '웹 개발자 채용', '미확인'];
+    const closedHeight = await tab.$eval(inlineButton, host => host.getBoundingClientRect().height);
     await expectInlinePreview(tab, fields);
+    expect(await tab.$eval(inlineButton, host => host.getBoundingClientRect().height)).toBe(closedHeight);
+    expect(await tab.$eval(inlineButton, host => {
+      const preview = host.shadowRoot?.querySelector('section');
+      if (!preview) return false;
+      const bounds = preview.getBoundingClientRect();
+      const bodyLayer = document.createElement('div');
+      bodyLayer.style.cssText = 'position: fixed; inset: 0; z-index: 1;';
+      host.parentElement?.after(bodyLayer);
+      const topElement = document.elementFromPoint(bounds.left + 10, bounds.top + 10);
+      bodyLayer.remove();
+      return topElement === host;
+    })).toBe(true);
     await tab.evaluate(floatingHeader => {
       document.body.insertAdjacentHTML('afterbegin',
         `<div class="jv_header_float" style="position: fixed; inset: 0 0 auto">${floatingHeader}</div>`);
